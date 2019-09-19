@@ -23,6 +23,7 @@ use itertools::Itertools;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::fmt;
 use std::io::{prelude::*, BufReader};
 use std::rc::Rc;
 use std::str::FromStr;
@@ -64,6 +65,17 @@ pub enum Relevance {
     Unjudged,
     /// Document not present.
     Missing,
+}
+
+impl fmt::Display for Relevance {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Relevance::*;
+        match self {
+            &Judged(rel) => write!(f, "{}", rel),
+            Unjudged => write!(f, "-1"),
+            Missing => write!(f, "-2"),
+        }
+    }
 }
 
 impl Default for Relevance {
@@ -123,14 +135,63 @@ impl FromStr for Relevance {
 }
 
 /// Result record.
+///
+/// # Examples
+///
+/// The separator could be any number of whitespaces.
+///
+/// ```
+/// # use cranky::{Record, ResultRecord};
+/// # fn main() -> Result<(), failure::Error> {
+/// let record_line = "030  Q0\tZF08-175-870  0 \t 4238   prise1";
+/// let record: ResultRecord = Record::parse_record(record_line, None)?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// You can use [`StringIdFactory`](struct.StringIdFactory.html) to reuse string-based IDs.
+///
+/// ```
+/// # use cranky::{Record, ResultRecord, StringIdFactory};
+/// # fn main() -> Result<(), failure::Error> {
+/// let mut id_factory = StringIdFactory::new();
+/// let record_line = "030  Q0\tZF08-175-870  0 \t 4238   prise1";
+/// let record: ResultRecord = Record::parse_record(record_line, Some(&mut id_factory))?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// When formating to a string, all separators are tabs:
+///
+/// ```
+/// # use cranky::{Record, ResultRecord, StringIdFactory};
+/// # fn main() -> Result<(), failure::Error> {
+/// # let mut id_factory = StringIdFactory::new();
+/// # let record_line = "030  Q0\tZF08-175-870  0 \t 4238   prise1";
+/// # let record: ResultRecord = Record::parse_record(record_line, Some(&mut id_factory))?;
+/// assert_eq!(
+///     &format!("{}", record),
+///     "030\tQ0\tZF08-175-870\t0\t4238\tprise1"
+/// );
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct ResultRecord {
-    qid: Qid,
-    docid: Docid,
-    rank: Rank,
-    score: Score,
-    iter: Iter,
-    run: Run,
+    /// Query TREC ID.
+    pub qid: Qid,
+    /// Document TREC ID.
+    pub docid: Docid,
+    /// Rank of the document in query result set.
+    /// The lower the number, the higher the document is ranked.
+    pub rank: Rank,
+    /// Score of the document in query result set.
+    /// The higher the number, the higher the document is ranked.
+    pub score: Score,
+    /// Iteration.
+    pub iter: Iter,
+    /// Run ID.
+    pub run: Run,
     relevance: Relevance,
 }
 
@@ -160,47 +221,71 @@ impl ResultRecord {
     }
 }
 
-/// Result record.
+/// Judgement record.
 #[derive(Debug)]
-pub struct RelevanceRecord {
-    qid: Qid,
-    docid: Docid,
-    iter: Iter,
-    relevance: Relevance,
+pub struct JudgementRecord {
+    /// Query TREC ID.
+    pub qid: Qid,
+    /// Document TREC ID.
+    pub docid: Docid,
+    /// Iteration.
+    pub iter: Iter,
+    /// Gold standard relevance.
+    pub relevance: Relevance,
 }
 
-impl Eq for RelevanceRecord {}
+impl Eq for JudgementRecord {}
 
-impl Ord for RelevanceRecord {
+impl Ord for JudgementRecord {
     fn cmp(&self, other: &Self) -> Ordering {
         (&self.iter, &self.qid, &self.docid).cmp(&(&other.iter, &other.qid, &other.docid))
     }
 }
 
-impl PartialOrd for RelevanceRecord {
+impl PartialOrd for JudgementRecord {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         (&self.iter, &self.qid, &self.docid).partial_cmp(&(&other.iter, &other.qid, &other.docid))
     }
 }
 
-impl PartialEq for RelevanceRecord {
+impl PartialEq for JudgementRecord {
     fn eq(&self, other: &Self) -> bool {
         (&self.iter, &self.qid, &self.docid) == (&other.iter, &other.qid, &other.docid)
     }
 }
 
-struct RecordFactory {
-    qid_factory: StringIdFactory<Qid>,
-    iter_factory: StringIdFactory<Iter>,
-    run_factory: StringIdFactory<Run>,
+/// Result or judgement record.
+pub trait Record: Sized + fmt::Display {
+    /// Parses record from a line of text.
+    /// `record_factory` is optionally used for reusing string-based IDs;
+    /// in case of its absense, all strings will be copied to the record.
+    fn parse_record(
+        record_line: &str,
+        record_factory: Option<&mut StringIdFactory>,
+    ) -> Result<Self, Error>;
 }
 
-trait Record: Sized {
-    fn parse_record(record_line: &str, record_factory: &mut RecordFactory) -> Result<Self, Error>;
+fn rcid(id_factory: &mut Option<&mut StringIdFactory>, id: &str) -> Rc<String> {
+    id_factory
+        .as_mut()
+        .map_or_else(|| Rc::new(id.to_string()), |f| f.get(id))
+}
+
+impl fmt::Display for ResultRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            self.qid.0, self.iter.0, self.docid.0, self.rank.0, self.score.0, self.run.0
+        )
+    }
 }
 
 impl Record for ResultRecord {
-    fn parse_record(record_line: &str, record_factory: &mut RecordFactory) -> Result<Self, Error> {
+    fn parse_record(
+        record_line: &str,
+        mut id_factory: Option<&mut StringIdFactory>,
+    ) -> Result<Self, Error> {
         let fields: Vec<&str> = record_line.split_whitespace().collect();
         if fields.len() != 6 {
             return Err(format_err!(
@@ -208,12 +293,12 @@ impl Record for ResultRecord {
                 fields.len()
             ));
         }
-        let qid = record_factory.qid_factory.get(fields[0]);
-        let iter = record_factory.iter_factory.get(fields[1]);
+        let qid = Qid(rcid(&mut id_factory, fields[0]));
+        let iter = Iter(rcid(&mut id_factory, fields[1]));
         let docid = Docid(String::from(fields[2]));
         let rank: Rank = fields[3].parse()?;
         let score: Score = fields[4].parse()?;
-        let run = record_factory.run_factory.get(fields[5]);
+        let run = Run(rcid(&mut id_factory, fields[5]));
         Ok(Self {
             qid,
             iter,
@@ -226,8 +311,21 @@ impl Record for ResultRecord {
     }
 }
 
-impl Record for RelevanceRecord {
-    fn parse_record(record_line: &str, record_factory: &mut RecordFactory) -> Result<Self, Error> {
+impl fmt::Display for JudgementRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}\t{}\t{}\t{}",
+            self.qid.0, self.iter.0, self.docid.0, self.relevance
+        )
+    }
+}
+
+impl Record for JudgementRecord {
+    fn parse_record(
+        record_line: &str,
+        mut id_factory: Option<&mut StringIdFactory>,
+    ) -> Result<Self, Error> {
         let fields: Vec<&str> = record_line.split_whitespace().collect();
         if fields.len() != 4 {
             return Err(format_err!(
@@ -235,8 +333,8 @@ impl Record for RelevanceRecord {
                 fields.len()
             ));
         }
-        let qid = record_factory.qid_factory.get(fields[0]);
-        let iter = record_factory.iter_factory.get(fields[1]);
+        let qid = Qid(rcid(&mut id_factory, fields[0]));
+        let iter = Iter(rcid(&mut id_factory, fields[1]));
         let docid = Docid(String::from(fields[2]));
         let relevance: Relevance = fields[3].parse()?;
         Ok(Self {
@@ -245,16 +343,6 @@ impl Record for RelevanceRecord {
             docid,
             relevance,
         })
-    }
-}
-
-impl RecordFactory {
-    fn new() -> Self {
-        Self {
-            qid_factory: StringIdFactory::new(),
-            iter_factory: StringIdFactory::new(),
-            run_factory: StringIdFactory::new(),
-        }
     }
 }
 
@@ -267,10 +355,10 @@ where
     T: Record,
 {
     let reader = BufReader::new(reader);
-    let mut record_factory = RecordFactory::new();
+    let mut id_factory = StringIdFactory::new();
     let res: Result<Vec<_>, Error> = reader
         .lines()
-        .map(|line| T::parse_record(&line?, &mut record_factory))
+        .map(|line| T::parse_record(&line?, Some(&mut id_factory)))
         .collect();
     Ok(res?)
 }
@@ -285,7 +373,7 @@ impl ResultSet {
     pub fn apply_judgements(mut self, mut judgements: Judgements) -> Self {
         self.0.sort();
         judgements.0.sort();
-        let compare = |res: &ResultRecord, rel: &RelevanceRecord| {
+        let compare = |res: &ResultRecord, rel: &JudgementRecord| {
             (&res.iter, &res.qid, &res.docid).cmp(&(&rel.iter, &rel.qid, &rel.docid))
         };
         Self(
@@ -303,7 +391,7 @@ impl ResultSet {
 }
 
 /// Abstraction over a set of relevance judgements.
-pub struct Judgements(pub Vec<RelevanceRecord>);
+pub struct Judgements(pub Vec<JudgementRecord>);
 
 impl Judgements {
     /// Reads file to memory.
@@ -312,42 +400,33 @@ impl Judgements {
     }
 }
 
-/// A convenience structure used to produce `Qid` objects.
-///
-/// It stores all previously used query IDs.
-/// When possible, it reuses a string.
-struct StringIdFactory<T> {
+/// A convenience structure used to produce String IDs.
+/// It stores all previously used query IDs. When possible, it reuses a string.
+pub struct StringIdFactory {
     ids: HashMap<String, Rc<String>>,
-    phantom: std::marker::PhantomData<T>,
 }
 
-impl<T> StringIdFactory<T>
-where
-    T: From<Rc<String>>,
-{
-    fn new() -> Self {
+impl StringIdFactory {
+    /// Constructs a new empty factory.
+    pub fn new() -> Self {
         Self {
             ids: HashMap::new(),
-            phantom: std::marker::PhantomData,
         }
     }
 
     /// Construct a new ID reusing a string if possible.
-    fn get(&mut self, qid: &str) -> T {
+    pub fn get(&mut self, qid: &str) -> Rc<String> {
         if let Some(qid) = self.ids.get(qid) {
-            T::from(Rc::clone(qid))
+            Rc::clone(qid)
         } else {
             let new_qid = Rc::new(qid.to_string());
             self.ids.insert(qid.to_string(), Rc::clone(&new_qid));
-            T::from(new_qid)
+            new_qid
         }
     }
 }
 
-impl<T> Default for StringIdFactory<T>
-where
-    T: From<Rc<String>>,
-{
+impl Default for StringIdFactory {
     fn default() -> Self {
         Self::new()
     }
@@ -392,8 +471,8 @@ mod test {
         }
     }
 
-    fn rel(qid: &str, iter: &str, docid: &str, rel: Relevance) -> RelevanceRecord {
-        RelevanceRecord {
+    fn rel(qid: &str, iter: &str, docid: &str, rel: Relevance) -> JudgementRecord {
+        JudgementRecord {
             qid: Qid(Rc::new(qid.to_string())),
             iter: Iter(Rc::new(iter.to_string())),
             docid: Docid(docid.to_string()),
