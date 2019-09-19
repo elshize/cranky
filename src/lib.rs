@@ -349,7 +349,8 @@ impl Record for JudgementRecord {
 /// Abstraction over a set of results from a single file in TREC format.
 pub struct ResultSet(pub Vec<ResultRecord>);
 
-fn read_records<R, T>(reader: R) -> Result<Vec<T>, Error>
+/// Read records.
+pub fn read_records<R, T>(reader: R) -> Result<Vec<T>, Error>
 where
     R: Read,
     T: Record,
