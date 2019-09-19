@@ -191,7 +191,7 @@ pub struct ResultRecord {
     /// Iteration.
     pub iter: Iter,
     /// Run ID.
-    pub run: Run,
+    pub run: Option<Run>,
     relevance: Relevance,
 }
 
@@ -275,9 +275,14 @@ impl fmt::Display for ResultRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}\t{}\t{}\t{}\t{}\t{}",
-            self.qid.0, self.iter.0, self.docid.0, self.rank.0, self.score.0, self.run.0
-        )
+            "{}\t{}\t{}\t{}\t{}",
+            self.qid.0, self.iter.0, self.docid.0, self.rank.0, self.score.0
+        )?;
+        if let Some(run) = &self.run {
+            write!(f, "\t{}", run.0)
+        } else {
+            write!(f, "")
+        }
     }
 }
 
@@ -287,9 +292,9 @@ impl Record for ResultRecord {
         mut id_factory: Option<&mut StringIdFactory>,
     ) -> Result<Self, Error> {
         let fields: Vec<&str> = record_line.split_whitespace().collect();
-        if fields.len() != 6 {
+        if fields.len() < 5 {
             return Err(format_err!(
-                "Invalid number of colums {}; expected 6",
+                "Invalid number of colums {}; expected at least 5",
                 fields.len()
             ));
         }
@@ -298,7 +303,11 @@ impl Record for ResultRecord {
         let docid = Docid(String::from(fields[2]));
         let rank: Rank = fields[3].parse()?;
         let score: Score = fields[4].parse()?;
-        let run = Run(rcid(&mut id_factory, fields[5]));
+        let run = if fields.len() > 5 {
+            Some(Run(rcid(&mut id_factory, fields[5])))
+        } else {
+            None
+        };
         Ok(Self {
             qid,
             iter,
@@ -467,7 +476,7 @@ mod test {
             docid: Docid(docid.to_string()),
             rank: Rank(rank),
             score: Score(score),
-            run: Run(Rc::new(run.to_string())),
+            run: Some(Run(Rc::new(run.to_string()))),
             relevance: rel,
         }
     }
