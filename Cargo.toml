@@ -3,7 +3,7 @@ name = "cranky"
 version = "0.1.0"
 authors = ["Michal Siedlaczek <michal.siedlaczek@nyu.edu>"]
 description = "Library and tool for evaluating query effectiveness for information retrieval"
-license = "MIT License (MIT)"
+license = "MIT"
 edition = "2018"
 repository = "https://github.com/elshize/cranky"
 
