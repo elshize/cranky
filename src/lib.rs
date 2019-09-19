@@ -49,11 +49,11 @@ pub struct Run(pub Rc<String>);
 pub struct Docid(pub String);
 
 /// Floating point result score.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub struct Score(pub f32);
 
 /// Document rank.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Rank(pub u32);
 
 /// Document relevance used as gold standard.
